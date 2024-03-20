@@ -1,0 +1,76 @@
+local xoxo = require "xoxo.xoxo"
+local hotseat = require "hotseat.hotseat"
+
+
+local PLAYER1 = {
+	name = "Player 1",
+	id = 1,
+	photo = "https://randomuser.me/api/portraits/med/lego/6.jpg",
+}
+local PLAYER2 = {
+	name = "Player 2",
+	id = 2,
+	photo = "https://randomuser.me/api/portraits/med/lego/7.jpg",
+}
+
+local function start_new_game()
+	hotseat.new_game()
+	hotseat.add_player(PLAYER1)
+	hotseat.add_player(PLAYER2)
+	xoxo.match_update(hotseat.state(), hotseat.get_active_player(), hotseat.get_other_player(), true)
+end
+
+function init(self)
+	msg.post(".", "acquire_input_focus")
+
+	-- client has requested to connect
+	xoxo.on_connect(function()
+		xoxo.show_menu()
+	end)
+
+	-- client has requested to join a match
+	xoxo.on_join_match(function(callback)
+		print("hotseat on_join_match")
+		hotseat.new_game()
+		hotseat.add_player(PLAYER1)
+		hotseat.add_player(PLAYER2)
+		xoxo.match_update(hotseat.state(), hotseat.get_active_player(), hotseat.get_other_player(), true)
+		callback(true)
+	end)
+
+	-- client has left the match
+	xoxo.on_leave_match(function()
+		print("hotseat on_leave_match")
+		xoxo.opponent_left()
+	end)
+
+	-- client has sent a move
+	xoxo.on_send_player_move(function(row, col)
+		print("hotseat on_send_player_move")
+		local state = hotseat.player_move(row, col)
+
+		-- start rematch countdown if the game is completed (win or draw)
+		if state.winner or state.draw then
+			state.rematch_countdown = 10
+			timer.delay(1, true, function(self, handle, time_elapsed)
+				state.rematch_countdown = state.rematch_countdown - time_elapsed
+				if state.rematch_countdown <= 0 then
+					timer.cancel(handle)
+					hotseat.rematch()
+					xoxo.match_update(hotseat.state(), hotseat.get_active_player(), hotseat.get_other_player(), true)
+				else
+					xoxo.match_update(state, hotseat.get_active_player(), hotseat.get_other_player(), true)
+				end
+			end)
+		end
+		xoxo.match_update(state, hotseat.get_active_player(), hotseat.get_other_player(), true)
+	end)
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("proxy_loaded") then
+		msg.post(sender, "init")
+		msg.post(sender, "enable")
+		go.delete("splash")
+	end
+end

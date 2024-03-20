@@ -1,0 +1,39 @@
+[project]
+title = XOXO
+dependencies#0 = https://github.com/britzl/gooey/archive/9.1.1.zip
+dependencies#1 = https://github.com/britzl/monarch/archive/3.2.2.zip
+
+[bootstrap]
+main_collection = /hotseat/hotseat.collectionc
+
+[input]
+game_binding = /xoxo/input/game.input_bindingc
+
+[display]
+width = 640
+height = 1136
+
+[script]
+shared_state = 1
+
+[library]
+include_dirs = xoxo
+
+[collection_proxy]
+max_count = 9
+
+[html5]
+scale_mode = stretch
+show_fullscreen_button = 0
+show_made_with_defold = 0
+htmlfile = /index.html
+
+[android]
+package = com.defold.game.xoxo
+
+[osx]
+bundle_identifier = com.defold.game.xoxo
+
+[ios]
+bundle_identifier = com.defold.game.xoxo
+

@@ -1,0 +1,212 @@
+local monarch = require "monarch.monarch"
+local gooey = require "gooey.gooey"
+local xoxo = require "xoxo.xoxo"
+
+local TEXTURE1_ID = "player1_photo"
+local TEXTURE2_ID = "player2_photo"
+
+local function fix_filename(filename)
+	filename = filename:gsub("([^0-9a-zA-Z%._ ])", function(c) return string.format("%%%02X", string.byte(c)) end)
+	filename = filename:gsub(" ", "+")
+	return filename
+end
+
+local function index_to_row_column(index)
+	local row = math.ceil(index / 3)
+	local column = 1 + ((index - 1) % 3)
+	return row, column
+end
+
+local function update_message(text)
+	gui.set_text(gui.get_node("message"), text)
+end
+
+local function save_file(filename, data)
+	local f, ok = io.open(filename, "wb")
+	if f then
+		f:write(data)
+		f:close()
+	end
+end
+
+local function load_file(filename)
+	local f, ok = io.open(filename, "rb")
+	if f then
+		local data = f:read("*a")
+		f:close()
+		return data
+	end
+end
+
+local function set_photo(data, texture_id)
+	local img = image.load(data)
+	gui.set_texture_data(texture_id, img.width, img.height, "rgb", img.buffer, false)
+end
+
+local function refresh_player(player, photo_node, placeholder_node, name_node, texture_id)
+	gui.set_enabled(photo_node, true)
+	gui.set_text(name_node, player and player.name or "")
+	if player and player.photo and player.photo ~= "" then
+		http.request(player.photo, "GET", function(self, id, response)
+			local filename = sys.get_save_file("xoxo", fix_filename(player.photo))
+			if response.status == 200 then
+				save_file(filename, response.response)
+				set_photo(response.response, texture_id)
+				gui.set_enabled(photo_node, true)
+				gui.set_enabled(placeholder_node, false)
+			elseif response.status == 304 then
+				local data = load_file(filename)
+				if data then
+					set_photo(data, texture_id)
+					gui.set_enabled(photo_node, true)
+					gui.set_enabled(placeholder_node, false)
+				end
+			end
+		end)
+	end
+end
+
+
+local function update_players(game, active_player, other_player, your_turn)
+	refresh_player(game.players[1], gui.get_node("player1_photo"), gui.get_node("player1_photo_placeholder"), gui.get_node("player1_name"), TEXTURE1_ID)
+	refresh_player(game.players[2], gui.get_node("player2_photo"), gui.get_node("player2_photo_placeholder"), gui.get_node("player2_name"), TEXTURE2_ID)
+end
+
+local function hide_cells()
+	for i=1,9 do
+		gui.set_enabled(gui.get_node("cell" .. i), false)
+	end
+end
+
+local function update_cells(game)
+	for i=1,9 do
+		local row, column = index_to_row_column(i)
+		local pidx = game.cells[row][column]
+		local url = msg.url(nil, "cell" .. i, "symbol")
+		local node = gui.get_node("cell" .. i)
+		if pidx == 1 then
+			gui.set_enabled(node, true)
+			gui.play_flipbook(node, hash("o"))
+		elseif pidx == 2 then
+			gui.set_enabled(node, true)
+			gui.play_flipbook(node, hash("x"))
+		else
+			gui.set_enabled(node, false)
+		end
+	end
+end
+
+
+local function show_game_over(message, rematch_countdown)
+	msg.post(".", "acquire_input_focus")
+	gui.set_enabled(gui.get_node("leave/bg"), true)
+	if rematch_countdown then
+		update_message(("%s - New match starting in %d seconds"):format(message, math.ceil(rematch_countdown)))
+	else
+		update_message(message)
+	end
+end
+
+
+local function update_game(game, active_player, other_player, your_turn)
+	update_cells(game)
+	if game.winner then
+		show_game_over("You won!", game.rematch_countdown)
+	elseif game.draw then
+		show_game_over("Draw!", game.rematch_countdown)
+	elseif your_turn then
+		msg.post(".", "acquire_input_focus")
+		update_message("Your turn")
+	else
+		update_message("Opponent's turn")
+	end
+end
+
+local function play_in_cell(cell_index, player_index)
+	msg.post(".", "release_input_focus")
+	update_message("Sending your move")
+
+	local row, column = index_to_row_column(cell_index)
+	
+	-- set symbol to give immediate feedback to user
+	local url = msg.url(nil, "cell" .. cell_index, "symbol")
+	local node = gui.get_node("cell" .. cell_index)
+	if player_index == 1 then
+		gui.set_enabled(node, true)
+		gui.play_flipbook(node, hash("o"))
+	elseif player_index == 2 then
+		gui.set_enabled(node, true)
+		gui.play_flipbook(node, hash("x"))
+	end
+
+	-- send move
+	xoxo.send_player_move(row, column)
+end
+
+function init(self)
+	gui.set_render_order(15)
+
+	update_message("Loading game")
+
+	-- init player avatars
+	local ok = gui.new_texture(TEXTURE1_ID, 120, 120, "rgb", (string.char(0xff) .. string.char(0x80) .. string.char(0x10)):rep(120*120), false)
+	if not ok then
+		print("Unable to create player1 texture")
+	end
+	local ok = gui.new_texture(TEXTURE2_ID, 120, 120, "rgb", (string.char(0xff) .. string.char(0x80) .. string.char(0x10)):rep(120*120), false)
+	if not ok then
+		print("Unable to create player2 texture")
+	end
+	local player1_photo = gui.get_node("player1_photo")
+	local player2_photo = gui.get_node("player2_photo")
+	gui.set_texture(player1_photo, TEXTURE1_ID)
+	gui.set_enabled(player1_photo, false)
+	gui.set_texture(player2_photo, TEXTURE2_ID)
+	gui.set_enabled(player2_photo, false)
+
+	-- hide button and cells
+	gui.set_enabled(gui.get_node("leave/bg"), false)
+	hide_cells()
+
+	xoxo.on_match_update(function(game, active_player, other_player, your_turn)
+		self.game = game
+		update_message("")
+		gui.set_enabled(gui.get_node("leave/bg"), false)
+		update_game(game, active_player, other_player, your_turn)
+		update_players(game, active_player, other_player, your_turn)
+	end)
+
+	xoxo.on_opponent_left(function()
+		msg.post(".", "acquire_input_focus")
+		gui.set_enabled(gui.get_node("leave/bg"), true)
+		update_message("Opponent left!")
+		hide_cells()
+	end)
+end
+
+function final(self)
+	xoxo.on_match_update(nil)
+	xoxo.on_opponent_left(nil)
+end
+
+
+function on_input(self, action_id, action)
+	local leave = gui.get_node("leave/bg")
+	if gui.is_enabled(leave) then
+		gooey.button("leave/bg", action_id, action, function()
+			gui.set_enabled(leave, false)
+			msg.post(".", "release_input_focus")
+			xoxo.leave_match()
+			monarch.back()
+		end)
+	else
+		if action_id == hash("touch") and action.released then
+			for i=1,9 do
+				if gui.pick_node(gui.get_node("cell" .. i), action.x, action.y) then
+					play_in_cell(i, self.game.player_turn)
+					return true
+				end
+			end
+		end
+	end
+end

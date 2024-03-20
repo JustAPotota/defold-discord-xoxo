@@ -1,0 +1,11 @@
+local M = {}
+
+function M.on_bundle_finished(opts)
+    print("Patching " .. opts.output_directory .. "/XOXO/dmloader.js" .. "...")
+    local patched = editor.get("/dmloader_patched.js", "text")
+    local file = io.open(opts.output_directory .. "/XOXO/dmloader.js", "w")
+    file:write(patched)
+    file:close()
+end
+
+return M
